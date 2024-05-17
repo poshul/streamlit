@@ -1818,6 +1818,68 @@ describe("App", () => {
     )
   })
 
+  describe("App.handleConnectionStateChanged", () => {
+    it("Sends WEBSOCKET_CONNECTED and WEBSOCKET_DISCONNECTED messages", () => {
+      renderApp(getProps())
+
+      const connectionManager = getMockConnectionManager(false)
+      const hostCommunicationMgr = getStoredValue<HostCommunicationManager>(
+        HostCommunicationManager
+      )
+
+      act(() =>
+        // @ts-expect-error - connectionManager.props is private
+        connectionManager.props.connectionStateChanged(
+          ConnectionState.CONNECTED
+        )
+      )
+      expect(hostCommunicationMgr.sendMessageToHost).toHaveBeenCalledWith({
+        type: "WEBSOCKET_CONNECTED",
+      })
+
+      act(() =>
+        // @ts-expect-error - connectionManager.props is private
+        connectionManager.props.connectionStateChanged(
+          ConnectionState.PINGING_SERVER
+        )
+      )
+      expect(hostCommunicationMgr.sendMessageToHost).toHaveBeenCalledWith({
+        type: "WEBSOCKET_DISCONNECTED",
+        attemptingToReconnect: true,
+      })
+    })
+
+    it("Sets attemptingToReconnect to false if DISCONNECTED_FOREVER", () => {
+      renderApp(getProps())
+
+      const connectionManager = getMockConnectionManager(false)
+      const hostCommunicationMgr = getStoredValue<HostCommunicationManager>(
+        HostCommunicationManager
+      )
+
+      act(() =>
+        // @ts-expect-error - connectionManager.props is private
+        connectionManager.props.connectionStateChanged(
+          ConnectionState.CONNECTED
+        )
+      )
+      expect(hostCommunicationMgr.sendMessageToHost).toHaveBeenCalledWith({
+        type: "WEBSOCKET_CONNECTED",
+      })
+
+      act(() =>
+        // @ts-expect-error - connectionManager.props is private
+        connectionManager.props.connectionStateChanged(
+          ConnectionState.DISCONNECTED_FOREVER
+        )
+      )
+      expect(hostCommunicationMgr.sendMessageToHost).toHaveBeenCalledWith({
+        type: "WEBSOCKET_DISCONNECTED",
+        attemptingToReconnect: false,
+      })
+    })
+  })
+
   describe("handles HostCommunication messaging", () => {
     function prepareHostCommunicationManager(
       options = {}
@@ -2381,6 +2443,32 @@ describe("App", () => {
       expect(hostCommunicationMgr.sendMessageToHost).toHaveBeenCalledWith({
         type: "CUSTOM_PARENT_MESSAGE",
         message: "random string",
+      })
+    })
+
+    it("properly handles TERMINATE_WEBSOCKET_CONNECTION and RESTART_WEBSOCKET_CONNECTION messages", () => {
+      const hostCommunicationMgr = prepareHostCommunicationManager()
+
+      fireWindowPostMessage({
+        type: "TERMINATE_WEBSOCKET_CONNECTION",
+      })
+
+      expect(getMockConnectionManager().disconnect).toHaveBeenCalled()
+
+      expect(hostCommunicationMgr.sendMessageToHost).toHaveBeenLastCalledWith({
+        type: "GUEST_READY",
+      })
+
+      fireWindowPostMessage({
+        type: "RESTART_WEBSOCKET_CONNECTION",
+      })
+
+      // This test isn't ideal, but since we can't inspect the state of our app
+      // using RTL, we have to check that some other side effect of calling
+      // initializeConnectionManager occurs.
+      expect(hostCommunicationMgr.sendMessageToHost).toHaveBeenLastCalledWith({
+        type: "SCRIPT_RUN_STATE_CHANGED",
+        scriptRunState: "notRunning",
       })
     })
   })

@@ -337,6 +337,15 @@ export class App extends PureComponent<Props, State> {
       deployedAppMetadataChanged: deployedAppMetadata => {
         this.setState({ deployedAppMetadata })
       },
+      restartWebsocketConnection: () => {
+        if (!this.connectionManager) {
+          this.initializeConnectionManager()
+        }
+      },
+      terminateWebsocketConnection: () => {
+        this.connectionManager?.disconnect()
+        this.connectionManager = null
+      },
     })
 
     this.endpoints = new DefaultStreamlitEndpoints({
@@ -391,9 +400,7 @@ export class App extends PureComponent<Props, State> {
     STOP_RECORDING: this.props.screenCast.stopRecording,
   }
 
-  componentDidMount(): void {
-    // Initialize connection manager here, to avoid
-    // "Can't call setState on a component that is not yet mounted." error.
+  initializeConnectionManager(): void {
     this.connectionManager = new ConnectionManager({
       sessionInfo: this.sessionInfo,
       endpoints: this.endpoints,
@@ -432,6 +439,17 @@ export class App extends PureComponent<Props, State> {
       },
     })
 
+    this.hostCommunicationMgr.sendMessageToHost({
+      type: "SCRIPT_RUN_STATE_CHANGED",
+      scriptRunState: this.state.scriptRunState,
+    })
+  }
+
+  componentDidMount(): void {
+    // Initialize connection manager here, to avoid
+    // "Can't call setState on a component that is not yet mounted." error.
+    this.initializeConnectionManager()
+
     if (isScrollingHidden()) {
       document.body.classList.add("embedded")
     }
@@ -461,11 +479,6 @@ export class App extends PureComponent<Props, State> {
     this.hostCommunicationMgr.sendMessageToHost({
       type: "SET_THEME_CONFIG",
       themeInfo: toExportedTheme(this.props.theme.activeTheme.emotion),
-    })
-
-    this.hostCommunicationMgr.sendMessageToHost({
-      type: "SCRIPT_RUN_STATE_CHANGED",
-      scriptRunState: this.state.scriptRunState,
     })
 
     this.metricsMgr.enqueue("viewReport")
@@ -564,19 +577,38 @@ export class App extends PureComponent<Props, State> {
       `Connection state changed from ${this.state.connectionState} to ${newState}`
     )
 
-    this.setState({ connectionState: newState })
-
     if (newState === ConnectionState.CONNECTED) {
       logMessage("Reconnected to server; requesting a script run")
       this.widgetMgr.sendUpdateWidgetsMessage()
       this.setState({ dialog: null })
+
+      this.hostCommunicationMgr.sendMessageToHost({
+        type: "WEBSOCKET_CONNECTED",
+      })
     } else {
+      // If we're starting from the CONNECTED state and going to any other
+      // state, we must be disconnecting.
+      // TODO(vdonato): Make sure we're covering all cases where we may want to
+      // send this message to the host. Right now, we're only sending this
+      // message when transitioning from CONNECTED -> <any other state>, but
+      // we may also want to send this message when transitioning from any
+      // state to PINGING_SERVER/DISCONNECTED_FOREVER.
+      if (this.state.connectionState === ConnectionState.CONNECTED) {
+        this.hostCommunicationMgr.sendMessageToHost({
+          type: "WEBSOCKET_DISCONNECTED",
+          attemptingToReconnect:
+            newState !== ConnectionState.DISCONNECTED_FOREVER,
+        })
+      }
+
       setCookie("_streamlit_xsrf", "")
 
       if (this.sessionInfo.isSet) {
         this.sessionInfo.clearCurrent()
       }
     }
+
+    this.setState({ connectionState: newState })
   }
 
   handleGitInfoChanged = (gitInfo: IGitInfo): void => {
